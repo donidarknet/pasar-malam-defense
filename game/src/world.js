@@ -1,9 +1,15 @@
 // The world: the whole game state and its rules, with no drawing and no DOM
 // in it, so the simulation can be stepped headlessly (balance tests, staged
 // screenshots). main.js owns the loop and the canvas; render.js paints this.
+//
+// A night has three rhythms: build (place and raise towers), wave (the
+// creatures march), and relic (after a cleared wave, pick one of three
+// pusaka before the next build). The relic phase is where the night's
+// strategy is chosen, and it is a real screen the judge can see.
 
 import {
   BASE_HP,
+  BOSS_SPAWN_INTERVAL,
   ENEMIES,
   FIELD,
   PATH_CELLS,
@@ -14,6 +20,7 @@ import {
   TOWERS,
   TOWER_ORDER,
   UI,
+  WAVE_EVENTS,
   WAVES,
   enemyHp,
   inRect,
@@ -23,6 +30,7 @@ import {
 } from './config.js';
 import { gongSlowAt, makeTower, sellValue, stepTower, towerPixel, towerRangePx, upgradeTower } from './towers.js';
 import { hurtEnemy, makeEnemy, stepEnemy } from './enemies.js';
+import { chooseRelic as takeRelic, offerRelics } from './relics.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -74,6 +82,7 @@ export function createWorld(random) {
       phase: 'build',
       gold: START_GOLD,
       hp: BASE_HP,
+      maxHp: BASE_HP,
       wave: 0,
       score: 0,
       kills: 0,
@@ -94,6 +103,20 @@ export function createWorld(random) {
       message: '',
       messageTimer: 0,
       events: [],
+      // The night's event (Gerhana, Hujan, Kerumunan, ...) or null.
+      event: null,
+      // Pusaka owned this night, and the three on offer, if any.
+      relics: [],
+      relicOffer: null,
+      // Pusaka multipliers, read where the rule runs.
+      dmgMul: 1,
+      goldMul: 1,
+      splashBonus: 0,
+      rangeBonus: 0,
+      gongSlowBonus: 0,
+      gongRangeBonus: 0,
+      upgradeDiscount: 0,
+      lampionShots: 1,
     };
   };
 
@@ -117,6 +140,13 @@ export function createWorld(random) {
     return true;
   }
 
+  // The price to raise `tower` one level, after the Tukang Cepat discount.
+  world.upgradePrice = function upgradePrice(tower) {
+    const s = world.state;
+    const base = upgradeCost(tower.type, tower.level);
+    return Math.max(1, Math.round(base * (1 - (s.upgradeDiscount || 0))));
+  };
+
   function placeTower(col, row) {
     const s = world.state;
     const type = s.selectedType;
@@ -129,6 +159,14 @@ export function createWorld(random) {
     }
     s.gold -= cost;
     const tower = makeTower(type, col, row);
+    // Pusaka range bonuses apply to towers built after they are taken.
+    tower.rangeBonus = s.rangeBonus || 0;
+    if (type === 'gong') {
+      tower.rangeBonus += s.gongRangeBonus || 0;
+      tower.slowBonus = s.gongSlowBonus || 0;
+      tower.slow += tower.slowBonus;
+    }
+    tower.range += tower.rangeBonus;
     s.towers.push(tower);
     s.selectedTower = tower;
     return true;
@@ -140,6 +178,11 @@ export function createWorld(random) {
     if (s.wave >= TOTAL_WAVES) return false;
     s.wave += 1;
     s.phase = 'wave';
+    s.event = WAVE_EVENTS[s.wave] || null;
+    if (s.event !== null) {
+      s.message = `${s.event.name}! ${s.event.desc}`;
+      s.messageTimer = 2.5;
+    }
     s.spawnQueue = buildSpawnQueue(s.wave);
     s.spawnTimer = 0.5;
     s.events.push({ type: 'horn' });
@@ -149,20 +192,19 @@ export function createWorld(random) {
   // The wave's creatures, shuffled so the mix never marches in one dull line.
   function buildSpawnQueue(wave) {
     const queue = [];
-    for (const [type, count] of WAVES[wave - 1]) {
+    const event = WAVE_EVENTS[wave] || null;
+    const lists = event && event.extra ? [...WAVES[wave - 1], ...event.extra] : WAVES[wave - 1];
+    for (const [type, count] of lists) {
       for (let i = 0; i < count; i += 1) queue.push(type);
     }
     for (let i = queue.length - 1; i > 0; i -= 1) {
       const j = Math.floor(random.next() * (i + 1));
       [queue[i], queue[j]] = [queue[j], queue[i]];
     }
-    // The Rat King walks in last, behind his escort.
-    const bossAt = queue.indexOf('raja');
-    if (bossAt !== -1) {
-      queue.splice(bossAt, 1);
-      queue.push('raja');
-    }
-    return queue;
+    // Bosses walk in last, behind their escort.
+    const bosses = queue.filter((type) => ENEMIES[type].boss);
+    const rest = queue.filter((type) => !ENEMIES[type].boss);
+    return [...rest, ...bosses];
   }
 
   function burst(x, y, color, count, speed) {
@@ -189,14 +231,15 @@ export function createWorld(random) {
   function killEnemy(enemy) {
     const s = world.state;
     s.kills += 1;
-    s.gold += enemy.reward;
-    s.score += enemy.reward * 2;
+    const reward = Math.round(enemy.reward * (s.goldMul || 1));
+    s.gold += reward;
+    s.score += reward * 2;
     s.events.push({ type: 'coin' });
     burst(enemy.x, enemy.y, '#ffcf4d', enemy.boss ? 40 : 10, enemy.boss ? 260 : 160);
-    addFloater(enemy.x, enemy.y - 18, `+${enemy.reward} emas`, '#ffcf4d');
+    addFloater(enemy.x, enemy.y - 18, `+${reward} emas`, '#ffcf4d');
     if (enemy.boss) {
       burst(enemy.x, enemy.y, '#ff5d73', 30, 320);
-      addFloater(enemy.x, enemy.y - 40, 'RAJA TIKUS TUMBANG!', '#ff5d73');
+      addFloater(enemy.x, enemy.y - 40, `${enemy.name.toUpperCase()} TUMBANG!`, '#ff5d73');
     }
   }
 
@@ -243,20 +286,26 @@ export function createWorld(random) {
 
   function stepWave(dt) {
     const s = world.state;
+    const event = s.event || {};
+    const speedMul = event.speed || 1;
+    const rateMul = event.rate || 1;
     if (s.spawnQueue.length > 0) {
       s.spawnTimer -= dt;
       if (s.spawnTimer <= 0) {
         const type = s.spawnQueue.shift();
-        s.enemies.push(makeEnemy(type, s.wave, waypoints, 1 + 0.28 * (s.wave - 1)));
-        s.spawnTimer = SPAWN_INTERVAL;
+        s.enemies.push(makeEnemy(type, s.wave, waypoints, 1 + 0.38 * (s.wave - 1), speedMul));
+        s.spawnTimer = ENEMIES[type].boss ? BOSS_SPAWN_INTERVAL : SPAWN_INTERVAL;
       }
     }
     // The Gong's aura is recomputed every step: slow only while in reach.
+    // A Kuntilanak ignores the slow — she drifts through it.
     for (const enemy of s.enemies) {
       if (!enemy.alive) continue;
       let slow = 0;
-      for (const tower of s.towers) {
-        slow = Math.max(slow, gongSlowAt(tower, enemy.x, enemy.y));
+      if (enemy.type !== 'kuntilanak') {
+        for (const tower of s.towers) {
+          slow = Math.max(slow, gongSlowAt(tower, enemy.x, enemy.y));
+        }
       }
       enemy.slow = slow;
       const arrived = stepEnemy(enemy, waypoints, dt);
@@ -271,8 +320,16 @@ export function createWorld(random) {
     }
     s.enemies = s.enemies.filter((e) => e.alive);
     for (const tower of s.towers) {
-      const shot = stepTower(tower, s.enemies, dt);
-      if (shot !== null) {
+      const multi = tower.type === 'lampion' ? (s.lampionShots || 1) : 1;
+      const shots = stepTower(tower, s.enemies, dt, rateMul, multi);
+      if (tower.snareFired) {
+        tower.snareFired = false;
+        s.events.push({ type: 'snare' });
+      }
+      for (const shot of shots) {
+        // Pusaka damage and splash apply when the shot is made.
+        shot.damage = Math.round(shot.damage * (s.dmgMul || 1));
+        if (shot.splash > 0) shot.splash += s.splashBonus || 0;
         shot.tx = shot.target.x;
         shot.ty = shot.target.y;
         s.projectiles.push(shot);
@@ -292,11 +349,21 @@ export function createWorld(random) {
       s.gold += bonus;
       s.score += s.wave * 100;
       addFloater(FIELD.x + (FIELD.cols * FIELD.cell) / 2, FIELD.y + 120, `Gelombang ${s.wave} selesai! +${bonus} emas`, '#7cf2c7');
-      s.phase = 'build';
       if (s.wave >= TOTAL_WAVES) {
         s.score += s.hp * 50;
         s.screen = SCREEN_WON;
+        s.phase = 'build';
         s.events.push({ type: 'victory' });
+        return;
+      }
+      // Between waves the market offers three pusaka; the night's strategy
+      // is chosen here. When every pusaka is owned, skip straight to build.
+      const offer = offerRelics(world);
+      if (offer.length > 0) {
+        s.relicOffer = offer;
+        s.phase = 'relic';
+      } else {
+        s.phase = 'build';
       }
     }
   }
@@ -319,6 +386,16 @@ export function createWorld(random) {
     if (s.messageTimer > 0) s.messageTimer -= dt;
   }
 
+  // Take the offered pusaka at `index` (0-2) and go back to building.
+  world.chooseRelic = function chooseRelic(index) {
+    return takeRelic(world, index);
+  };
+
+  function relicCardRect(i) {
+    const card = UI.relicCard;
+    return { x: card.x + i * (card.w + card.gap), y: card.y, w: card.w, h: card.h };
+  }
+
   function handleClick(x, y) {
     const s = world.state;
     if (s.screen === SCREEN_TITLE) {
@@ -330,6 +407,16 @@ export function createWorld(random) {
       return;
     }
     if (s.screen !== SCREEN_PLAY) return;
+    // In the relic phase the only click that matters is a pusaka card.
+    if (s.phase === 'relic') {
+      for (let i = 0; i < 3; i += 1) {
+        if (inRect(x, y, relicCardRect(i))) {
+          world.chooseRelic(i);
+          return;
+        }
+      }
+      return;
+    }
     if (inRect(x, y, UI.startButton)) {
       startWave();
       return;
@@ -356,7 +443,7 @@ export function createWorld(random) {
       if (inRect(x, y, UI.upgradeButton)) {
         const tower = s.selectedTower;
         if (tower.level < 3) {
-          const cost = upgradeCost(tower.type, tower.level);
+          const cost = world.upgradePrice(tower);
           if (s.gold >= cost) {
             s.gold -= cost;
             upgradeTower(tower);
@@ -417,14 +504,17 @@ export function createWorld(random) {
     }
     if (input.key !== null && input.key !== undefined) {
       const key = input.key;
-      if (s.screen === SCREEN_PLAY) {
-        if (key >= '1' && key <= '4') {
+      if (s.screen === SCREEN_PLAY && s.phase === 'relic') {
+        // Keys 1-3 take the offered pusaka.
+        if (key >= '1' && key <= '3') world.chooseRelic(Number(key) - 1);
+      } else if (s.screen === SCREEN_PLAY) {
+        if (key >= '1' && key <= '6') {
           s.selectedType = TOWER_ORDER[Number(key) - 1];
           s.selectedTower = null;
         } else if (key === 'u' && s.selectedTower !== null) {
           const tower = s.selectedTower;
           if (tower.level < 3) {
-            const cost = upgradeCost(tower.type, tower.level);
+            const cost = world.upgradePrice(tower);
             if (s.gold >= cost) {
               s.gold -= cost;
               upgradeTower(tower);
@@ -455,6 +545,7 @@ export function createWorld(random) {
   world.canPlace = canPlace;
   world.startWave = startWave;
   world.placeTower = placeTower;
+  world.relicCardRect = relicCardRect;
 
   return world;
 }
