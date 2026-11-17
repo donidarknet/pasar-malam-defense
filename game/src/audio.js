@@ -85,6 +85,15 @@ export function createAudio() {
     setTimeout(() => tone(1760, 0.12, 'sine', 0.05), 70);
   };
 
+  audio.snare = function snare() {
+    tone(300, 0.09, 'square', 0.07, 140);
+    tone(180, 0.12, 'square', 0.05, 90);
+  };
+
+  audio.relic = function relic() {
+    [880, 1108, 1318].forEach((freq, i) => setTimeout(() => tone(freq, 0.3, 'sine', 0.07), i * 110));
+  };
+
   audio.horn = function horn() {
     tone(220, 0.5, 'sawtooth', 0.07, 330);
     tone(277, 0.5, 'sawtooth', 0.05, 415);
