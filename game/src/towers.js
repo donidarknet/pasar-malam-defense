@@ -1,6 +1,11 @@
 // Towers: what each type does, where it may stand, what it costs to raise
 // it a level, and how it picks a target and fires. No drawing here —
 // render.js paints whatever this module decides.
+//
+// A tower's relic bonuses ride on the tower itself (rangeBonus, slowBonus),
+// so an upgrade — which recomputes stats from the base table — never wipes
+// them. World-level multipliers (damage, splash, fire rate) are applied by
+// the caller when the shot is made, not stored here.
 
 import { FIELD, MAX_LEVEL, TOWERS, towerStats, upgradeCost, SELL_RATE } from './config.js';
 
@@ -21,8 +26,14 @@ export function makeTower(type, col, row) {
     rate: stats.rate,
     splash: stats.splash,
     slow: stats.slow,
+    // Relic bonuses, written by the world when a pusaka is taken.
+    rangeBonus: 0,
+    slowBonus: 0,
     angle: -Math.PI / 2,
     flash: 0,
+    // The Jebakan sets this the step it snares a creature, so the world
+    // can play the sound for it.
+    snareFired: false,
   };
 }
 
@@ -39,11 +50,11 @@ export function upgradeTower(tower) {
   tower.level += 1;
   tower.invested += cost;
   const stats = towerStats(tower.type, tower.level);
-  tower.range = stats.range;
+  tower.range = stats.range + (tower.rangeBonus || 0);
   tower.damage = stats.damage;
   tower.rate = stats.rate;
   tower.splash = stats.splash;
-  tower.slow = stats.slow;
+  tower.slow = stats.slow + (tower.slowBonus || 0);
   return cost;
 }
 
@@ -55,36 +66,61 @@ export function towerRangePx(tower) {
   return tower.range * FIELD.cell;
 }
 
-// The target is the enemy furthest along the road inside the tower's reach;
-// a tower that cannot hurt anything (the Gong) never takes a target.
-export function pickTarget(tower, enemies) {
-  if (TOWERS[tower.type].damage === 0) return null;
+// The targets are the enemies furthest along the road inside the tower's
+// reach, up to `count` of them; a tower that cannot hurt anything (the Gong,
+// the Jebakan) never takes a target.
+export function pickTargets(tower, enemies, count) {
+  if (TOWERS[tower.type].damage === 0) return [];
   const centre = towerPixel(tower);
   const reach = towerRangePx(tower);
-  let best = null;
+  const inRange = [];
   for (const enemy of enemies) {
     if (!enemy.alive) continue;
     const dx = enemy.x - centre.x;
     const dy = enemy.y - centre.y;
     if (dx * dx + dy * dy > reach * reach) continue;
-    if (best === null || enemy.progress > best.progress) best = enemy;
+    inRange.push(enemy);
   }
-  return best;
+  inRange.sort((a, b) => b.progress - a.progress);
+  return inRange.slice(0, count);
 }
 
-// One tower's step: cool down, aim, and loose a projectile when ready.
-// Returns a projectile object, or null when the tower did not fire.
-export function stepTower(tower, enemies, dt) {
+// One tower's step: cool down, aim, and loose projectiles when ready.
+// Returns the projectiles fired this step (an empty list when the tower did
+// not fire). The Gong fires nothing — its aura is read by the world. The
+// Jebakan fires nothing either: when its cooldown is ready and a creature
+// walks into reach, it roots that creature in place instead.
+export function stepTower(tower, enemies, dt, rateMul, multi) {
   tower.cooldown -= dt;
   if (tower.flash > 0) tower.flash -= dt;
-  const target = pickTarget(tower, enemies);
-  if (target === null) return null;
+  if (tower.type === 'jebakan') {
+    if (tower.cooldown > 0) return [];
+    const centre = towerPixel(tower);
+    const reach = towerRangePx(tower);
+    let victim = null;
+    for (const enemy of enemies) {
+      if (!enemy.alive || enemy.root > 0) continue;
+      const dx = enemy.x - centre.x;
+      const dy = enemy.y - centre.y;
+      if (dx * dx + dy * dy > reach * reach) continue;
+      if (victim === null || enemy.progress > victim.progress) victim = enemy;
+    }
+    if (victim === null) return [];
+    victim.root = 1.2;
+    tower.cooldown = 4;
+    tower.flash = 0.12;
+    tower.snareFired = true;
+    return [];
+  }
+  const targets = pickTargets(tower, enemies, multi || 1);
+  if (targets.length === 0) return [];
   const centre = towerPixel(tower);
-  tower.angle = Math.atan2(target.y - centre.y, target.x - centre.x);
-  if (tower.cooldown > 0) return null;
-  tower.cooldown = 1 / tower.rate;
+  const first = targets[0];
+  tower.angle = Math.atan2(first.y - centre.y, first.x - centre.x);
+  if (tower.cooldown > 0) return [];
+  tower.cooldown = 1 / (tower.rate * (rateMul || 1));
   tower.flash = 0.12;
-  return {
+  return targets.map((target) => ({
     x: centre.x,
     y: centre.y,
     target,
@@ -93,7 +129,7 @@ export function stepTower(tower, enemies, dt) {
     splash: tower.splash,
     color: TOWERS[tower.type].color,
     kind: tower.type,
-  };
+  }));
 }
 
 // The Gong's aura: every enemy inside its reach walks slower while it stands.
