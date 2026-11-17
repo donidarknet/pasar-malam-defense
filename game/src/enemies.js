@@ -6,7 +6,7 @@ import { ENEMIES, FIELD } from './config.js';
 
 let nextId = 1;
 
-export function makeEnemy(type, wave, waypoints, hpScale) {
+export function makeEnemy(type, wave, waypoints, hpScale, speedMul) {
   const def = ENEMIES[type];
   const start = waypoints[0];
   return {
@@ -17,7 +17,7 @@ export function makeEnemy(type, wave, waypoints, hpScale) {
     y: start.y,
     hp: Math.round(def.hp * hpScale),
     maxHp: Math.round(def.hp * hpScale),
-    speed: def.speed,
+    speed: def.speed * (speedMul || 1),
     reward: def.reward,
     damage: def.damage,
     radius: def.radius,
@@ -26,6 +26,8 @@ export function makeEnemy(type, wave, waypoints, hpScale) {
     waypoint: 1,
     progress: 0,
     slow: 0,
+    // Seconds left rooted by a Jebakan; a rooted creature does not walk.
+    root: 0,
     alive: true,
     wobble: Math.random() * Math.PI * 2,
   };
@@ -35,6 +37,10 @@ export function makeEnemy(type, wave, waypoints, hpScale) {
 // the market gate at the end of the road.
 export function stepEnemy(enemy, waypoints, dt) {
   if (!enemy.alive) return null;
+  if (enemy.root > 0) {
+    enemy.root -= dt;
+    return null;
+  }
   enemy.wobble += dt * 6;
   const target = waypoints[enemy.waypoint];
   if (!target) return 'arrived';
