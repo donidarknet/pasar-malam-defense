@@ -5,7 +5,6 @@
 // like and the same seed always gives the same frame.
 
 import { STEP, TOWERS } from './config.js';
-import { upgradeCost } from './config.js';
 import { upgradeTower } from './towers.js';
 import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WON } from './world.js';
 
@@ -24,21 +23,34 @@ const PLAN = [
   ['gong', 4, 6],
   ['kembang', 13, 3],
   ['penjaga', 2, 5],
+  ['meriam', 11, 5],
+  ['jebakan', 5, 2],
+  ['meriam', 2, 8],
+  ['jebakan', 13, 5],
+  ['meriam', 5, 8],
+  ['jebakan', 10, 5],
 ];
 
 function emptyInput(actions) {
   return { clicked: null, key: null, actions: actions || [], mouseX: -1, mouseY: -1 };
 }
 
-// One autopilot beat: start the game, build the next planned tower, upgrade
-// when gold is spare, otherwise send the next wave.
-function autoStep(world) {
+// One autopilot beat: start the game, take a pusaka when one is offered,
+// build the next planned tower, upgrade when gold is spare, otherwise send
+// the next wave. With `holdRelic` the autopilot leaves a pusaka offer
+// standing, so a screenshot can stage the choice screen.
+function autoStep(world, holdRelic) {
   const s = world.state;
   if (s.screen === SCREEN_TITLE) {
     world.step(STEP, emptyInput([1]));
     return;
   }
   if (s.screen !== SCREEN_PLAY) return;
+  if (s.phase === 'relic') {
+    // Take the first pusaka on offer: the autopilot never dithers.
+    if (!holdRelic) world.chooseRelic(0);
+    return;
+  }
   if (s.phase === 'build') {
     const next = PLAN.find(([, col, row]) => world.towerAt(col, row) === null && world.canPlace(col, row));
     if (next !== undefined) {
@@ -52,7 +64,7 @@ function autoStep(world) {
     } else {
       const up = s.towers.find((t) => t.level < 3);
       if (up !== undefined && s.gold > 160) {
-        const cost = upgradeCost(up.type, up.level);
+        const cost = world.upgradePrice(up);
         if (s.gold >= cost) {
           s.gold -= cost;
           upgradeTower(up);
@@ -72,21 +84,26 @@ function runFor(world, seconds) {
   for (let i = 0; i < steps; i += 1) autoStep(world);
 }
 
-function runUntil(world, done, maxSeconds) {
+function runUntil(world, done, maxSeconds, holdRelic) {
   const steps = Math.ceil(maxSeconds / STEP);
   for (let i = 0; i < steps; i += 1) {
-    autoStep(world);
+    autoStep(world, holdRelic);
     if (done(world.state)) return true;
   }
   return false;
 }
 
 /**
- * Set `world` to the named scene (start, play or end) and return the screen
- * to draw over it and the best score to show.
+ * Set `world` to the named scene (start, play, relic or end) and return the
+ * screen to draw over it and the best score to show.
  */
 export function stageShot(name, world) {
   world.reset();
+  if (name === 'relic') {
+    // Between waves: the first pusaka offer, three cards on the table.
+    runUntil(world, (s) => s.screen === SCREEN_PLAY && s.phase === 'relic', 300, true);
+    return { screen: SCREEN_PLAY, best: world.state.score };
+  }
   if (name !== 'play' && name !== 'end') {
     // Title: a half-built market with the first wave already on the road.
     // (Staged gold, so the scene can show a fuller market than a fresh run.)
