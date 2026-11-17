@@ -65,6 +65,8 @@ function playEvents(now) {
       }
     } else if (event.type === 'horn') audio.horn();
     else if (event.type === 'hurt') audio.hurt();
+    else if (event.type === 'snare') audio.snare();
+    else if (event.type === 'relic') audio.relic();
     else if (event.type === 'victory') audio.victory();
     else if (event.type === 'defeat') audio.defeat();
   }
