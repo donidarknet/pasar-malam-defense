@@ -10,15 +10,25 @@ Pasar Malam — Night Market Defense: a wave-defense game for make.fun's **best-
 
 - **Goal:** keep the market's HP above 0 through 10 waves. Win by surviving
   wave 10; lose if the market falls.
-- **Towers** (click a card, then a grass cell; keys 1–4):
+- **Towers** (click a card, then a grass cell; keys 1–6):
   - **Lampion** (50 gold) — fast, cheap lantern that zaps one target.
   - **Kembang Api** (100 gold) — slow firework with splash damage.
   - **Gong** (80 gold) — no damage, slows every creature in reach.
   - **Penjaga** (150 gold) — long-range guard with heavy damage.
+  - **Meriam Bambu** (180 gold) — slow cannon with huge splash damage.
+  - **Jebakan Tikus** (40 gold) — roots the first creature that walks in.
 - **Upgrades:** click a placed tower, then U (or the ▲ button) to raise it
   to level 3; X (or Jual) sells it back for 70% of what you put in.
 - **Creatures:** Tikus Pasar (rats), Kelelawar (bats), Musang (civets),
-  Hantu (ghosts), and the wave-10 boss, **Raja Tikus**.
+  Hantu (ghosts), Ular Sawah (fast snakes), Kuntilanak (ignores the Gong's
+  slow), the wave-5 mini-boss **Musang Raja**, and the wave-10 boss,
+  **Raja Tikus**.
+- **Pusaka:** after every cleared wave, pick 1 of 3 relics — Api Abadi
+  (+15% damage), Lampion Ganda, Gong Perak, Kantong Emas (+20% gold),
+  Perisai Pasar (+5 HP), Serbuk Mesiu (+splash), Mata Elang (+range), or
+  Tukang Cepat (upgrades -25%).
+- **Wave events:** Gerhana (wave 4, faster creatures), Hujan (wave 6, slower
+  shots and slower creatures), Kerumunan (wave 8, a much bigger swarm).
 - **Controls:** mouse to place/select/upgrade, 1–4 select a tower, Space
   starts the next wave, P pause, R restart, M mute. Sound is synthesized
   live with WebAudio — no audio files.
